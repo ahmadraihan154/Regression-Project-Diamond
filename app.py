@@ -4,44 +4,50 @@ import joblib
 import streamlit as st
 from datetime import datetime
 
-# Fungsi untuk prediksi harga (tetap sama)
+# Fungsi untuk prediksi harga
 def predict_price(models, input_dict):
     try:
-        if isinstance(input_dict, pd.Series):
-            input_data = input_dict.to_frame().T
-        else:
-            input_data = pd.DataFrame([input_dict])
-        
+        # Convert input_dict ke DataFrame
+        input_df = pd.DataFrame([input_dict])
+
+        # === 1. Transformasi fitur numerik ===
         num_features = ['carat', 'table', 'x', 'y', 'z']
         for col in num_features:
             transformer = models['power_transformers'][col]
-            input_data[f'transform_{col}'] = transformer.transform(input_data[[col]])
-        input_data.drop(columns=num_features, inplace=True)
-        
+            input_df[f'transform_{col}'] = transformer.transform(input_df[[col]])
+        transformed_num = input_df[[f'transform_{col}' for col in num_features]]
+
+        # === 2. Encoding fitur kategorikal ===
         cat_features = ['cut', 'color', 'clarity']
-        encoded = models['encoder'].transform(input_data[cat_features])
+        encoded = models['encoder'].transform(input_df[cat_features])
         encoded_df = pd.DataFrame(
             encoded,
             columns=models['encoder'].get_feature_names_out(cat_features),
-            index=input_data.index
+            index=input_df.index
         )
-        
-        input_processed = encoded_df.join(input_data.drop(columns=cat_features))
-        
-        missing_cols = set(models['final_columns']) - set(input_processed.columns)
-        for col in missing_cols:
-            input_processed[col] = 0
-        input_processed = input_processed[models['final_columns']]
-        
+
+        # === 3. Gabungkan fitur hasil transformasi numerik dan kategorikal ===
+        input_processed = pd.concat([encoded_df, transformed_num], axis=1)
+
+        # === 4. Lengkapi kolom agar sesuai urutan training ===
+        for col in models['final_columns']:
+            if col not in input_processed:
+                input_processed[col] = 0  # tambahkan kolom yang hilang dengan nol
+
+        input_processed = input_processed[models['final_columns']]  # urutkan kolom sesuai model
+
+        # === 5. Prediksi dan inverse transform harga ===
         pred = models['lgbm_model'].predict(input_processed)
         price_transformer = models['power_transformers']['price']
-        return price_transformer.inverse_transform(np.array(pred).reshape(-1, 1))[0][0]
-    
+        predicted_price = price_transformer.inverse_transform(np.array(pred).reshape(-1, 1))[0][0]
+
+        return predicted_price
+
     except Exception as e:
-        st.error(f"Error prediksi: {str(e)}")
+        st.error(f"Error saat prediksi: {str(e)}")
         return None
 
-# Load resources dengan caching (disederhanakan)
+# Load resources dengan caching 
 @st.cache_resource
 def load_resources():
     return {
