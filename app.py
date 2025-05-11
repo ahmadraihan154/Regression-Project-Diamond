@@ -48,7 +48,6 @@ def load_resources():
         'models': {
             'lgbm_model': joblib.load('lgbm_model.joblib'),
             'power_transformers': joblib.load('power_transformers.joblib'),
-            'pca': joblib.load('pca_model.joblib'),
             'encoder': joblib.load('onehot_encoder.joblib'),
             'final_columns': joblib.load('final_feature_columns.joblib')
         }
