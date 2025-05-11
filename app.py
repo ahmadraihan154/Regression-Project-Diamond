@@ -4,69 +4,74 @@ import joblib
 import streamlit as st
 from datetime import datetime
 
-# Fungsi untuk prediksi harga
+# Fungsi untuk prediksi harga - TANPA REDUKSI DIMENSI
 def predict_price(models, input_dict):
     try:
-        # Convert input_dict ke DataFrame
+        # 1. Convert input_dict ke DataFrame
         input_df = pd.DataFrame([input_dict])
-
-        # === 1. Transformasi fitur numerik ===
-        num_features = ['carat', 'table', 'x', 'y', 'z']
-        for col in num_features:
+        
+        # 2. Buat salinan untuk transformasi
+        input_transformed = input_df.copy()
+        
+        # 3. Transformasi fitur numerik (TANPA REDUKSI DIMENSI)
+        numerical_features = ['carat', 'table', 'x', 'y', 'z']
+        for col in numerical_features:
             transformer = models['power_transformers'][col]
-            input_df[f'transform_{col}'] = transformer.transform(input_df[[col]])
-        transformed_num = input_df[[f'transform_{col}' for col in num_features]]
-
-        # === 2. Encoding fitur kategorikal ===
-        cat_features = ['cut', 'color', 'clarity']
-        encoded = models['encoder'].transform(input_df[cat_features])
+            input_transformed[f'transform_{col}'] = transformer.transform(input_df[[col]])
+        
+        # 4. Encoding fitur kategorikal
+        categorical_features = ['cut', 'color', 'clarity']
+        encoded = models['encoder'].transform(input_df[categorical_features])
         encoded_df = pd.DataFrame(
             encoded,
-            columns=models['encoder'].get_feature_names_out(cat_features),
+            columns=models['encoder'].get_feature_names_out(categorical_features),
             index=input_df.index
         )
-
-        # === 3. Gabungkan fitur hasil transformasi numerik dan kategorikal ===
-        input_processed = pd.concat([encoded_df, transformed_num], axis=1)
-
-        # === 4. Lengkapi kolom agar sesuai urutan training ===
-        for col in models['final_columns']:
-            if col not in input_processed:
-                input_processed[col] = 0  # tambahkan kolom yang hilang dengan nol
-
-        input_processed = input_processed[models['final_columns']]  # urutkan kolom sesuai model
-
-        # === 5. Prediksi dan inverse transform harga ===
-        pred = models['lgbm_model'].predict(input_processed)
+        
+        # 5. Gabungkan hasil transformasi untuk prediksi
+        transformed_cols = [f'transform_{col}' for col in numerical_features]
+        input_for_model = pd.concat([encoded_df, input_transformed[transformed_cols]], axis=1)
+        
+        # 6. Lengkapi kolom agar sesuai urutan training
+        missing_cols = set(models['final_columns']) - set(input_for_model.columns)
+        for col in missing_cols:
+            input_for_model[col] = 0
+        input_for_model = input_for_model[models['final_columns']]
+        
+        # 7. Prediksi dan inverse transform harga
+        pred = models['lgbm_model'].predict(input_for_model)
         price_transformer = models['power_transformers']['price']
         predicted_price = price_transformer.inverse_transform(np.array(pred).reshape(-1, 1))[0][0]
-
+        
         return predicted_price
-
+    
     except Exception as e:
         st.error(f"Error saat prediksi: {str(e)}")
         return None
 
-# Load resources dengan caching 
+# Load resources dengan caching
 @st.cache_resource
 def load_resources():
-    return {
-        'models': {
+    try:
+        models = {
             'lgbm_model': joblib.load('lgbm_model.joblib'),
             'power_transformers': joblib.load('power_transformers.joblib'),
             'encoder': joblib.load('onehot_encoder.joblib'),
             'final_columns': joblib.load('final_feature_columns.joblib')
         }
-    }
+        return {'models': models}
+    except Exception as e:
+        st.error(f"Gagal memuat model: {str(e)}")
+        return None
 
 def main():
     st.set_page_config(
         page_title="Diamond Price Prediction",
         page_icon="💎",
-        layout="centered"  # Diubah dari "wide" ke "centered"
+        layout="centered"
     )
     
-    # Inisialisasi session state (disederhanakan)
+    # Inisialisasi session state
     if 'resources' not in st.session_state:
         st.session_state.resources = load_resources()
     if 'history' not in st.session_state:
@@ -80,7 +85,7 @@ def main():
     
     if page == "Prediction":
         render_prediction_page()
-    else:
+    elif page == "History":
         render_history_page()
 
 def render_prediction_page():
@@ -125,26 +130,26 @@ def render_prediction_page():
             )
             x = st.number_input(
                 "Length", 
-                min_value=0.0, 
+                min_value=0.1, 
                 max_value=20.0, 
                 value=None,
-                placeholder="Masukkan nilai 0.0 sampai 20.0",
+                placeholder="Masukkan nilai 0.1 sampai 20.0",
                 step=0.1
             )
             y = st.number_input(
                 "Width", 
-                min_value=0.0, 
+                min_value=0.1, 
                 max_value=20.0, 
                 value=None,
-                placeholder="Masukkan nilai 0.0 sampai 20.0",
+                placeholder="Masukkan nilai 0.1 sampai 20.0",
                 step=0.1
             )
             z = st.number_input(
                 "Depth", 
-                min_value=0.0, 
+                min_value=0.1, 
                 max_value=20.0, 
                 value=None,
-                placeholder="Masukkan nilai 0.0 sampai 20.0",
+                placeholder="Masukkan nilai 0.1 sampai 20.0",
                 step=0.1
             )
         
@@ -155,10 +160,18 @@ def render_prediction_page():
                 st.error("Harap isi semua field!")
             else:
                 input_dict = {
-                    'carat': carat, 'cut': cut, 'color': color, 'clarity': clarity,
-                    'table': table, 'x': x, 'y': y, 'z': z
+                    'carat': float(carat),
+                    'cut': cut,
+                    'color': color,
+                    'clarity': clarity,
+                    'table': float(table),
+                    'x': float(x),
+                    'y': float(y),
+                    'z': float(z)
                 }
-                predicted_price = predict_price(st.session_state.resources['models'], input_dict)
+                
+                with st.spinner("Calculating price..."):
+                    predicted_price = predict_price(st.session_state.resources['models'], input_dict)
                 
                 if predicted_price:
                     # Tambahkan ke history
